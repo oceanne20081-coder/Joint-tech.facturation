@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Jointech inc. - Facturation</title>
+
+<!-- jsPDF + AutoTable -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
+
+<style>
+  body { font-family: Arial, sans-serif; background: #f5f5f5; margin: 20px; }
+  .facture { background: white; padding: 20px; max-width: 1000px; margin: auto; border-radius: 10px; box-shadow: 0 0 10px #0002; }
+  h1 { margin-top: 0; }
+  label { font-weight: bold; display:block; margin-top:10px; }
+  input, textarea, button { box-sizing: border-box; }
+  input[type="text"], textarea { width: 100%; padding: 8px; margin-top: 4px; }
+  .inline { display:inline-block; vertical-align:middle; margin-right:10px; }
+  table { width:100%; border-collapse: collapse; margin-top:15px; }
+  th, td { border:1px solid #ddd; padding:8px; text-align:left; vertical-align: top; }
+  th { background:#f0f0f0; }
+  .total { text-align:right; font-size:16px; font-weight:bold; }
+  .btn { background:#3498db; color:white; border:none; padding:8px 12px; border-radius:5px; cursor:pointer; margin-top:10px; }
+  .btn:hover { background:#2980b9; }
+  #footer { margin-top:30px; padding-top:15px; border-top:2px solid #ddd; font-size:14px; color:#555; line-height:1.4; text-align:center; }
+  @media print {
+    .btn, input, textarea { display:none; }
+  }
+  .logo-placeholder { width:260px; height:80px; border:2px dashed #bbb; display:flex; align-items:center; justify-content:center; color:#777; margin-bottom:10px; }
+</style>
+</head>
+<body>
+
+<div class="facture">
+  <div class="logo-placeholder">ESPACE LOGO (250x120)</div>
+
+  <h1>Jointech inc. - Facturation</h1>
+
+  <label>Nom du client :</label>
+  <input type="text" id="client" placeholder="Nom du client">
+
+  <label>Adresse :</label>
+  <input type="text" id="adresse" placeholder="Adresse du client">
+
+  <label>Adresse de facturation :</label>
+  <input type="text" id="adresseFacturation" placeholder="Adresse de facturation">
+
+  <label>Téléphone :</label>
+  <input type="text" id="telephone" placeholder="(514) 555-1234">
+
+  <p><strong>Numéro de facture :</strong> <span id="numeroFacture"></span></p>
+  <p><strong>Date et heure :</strong> <span id="dateHeure"></span></p>
+
+  <h3>Détails des travaux</h3>
+  <table id="services">
+    <thead>
+      <tr>
+        <th>Description</th>
+        <th style="width:100px">Quantité</th>
+        <th style="width:140px">Prix unitaire ($)</th>
+        <th style="width:120px">Total ($)</th>
+        <th style="width:60px"></th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <button class="btn" onclick="ajouterLigne()">Ajouter une ligne</button>
+  <button class="btn" onclick="nouvelleFacture()">Nouvelle facture</button>
+  <button class="btn" onclick="imprimer()">Imprimer</button>
+
+  <h3>Résumé</h3>
+  <p class="total">Sous-total : <span id="sousTotal">0.00</span> $</p>
+  <p class="total">TPS (5%) : <span id="tps">0.00</span> $</p>
+  <p class="total">TVQ (9.975%) : <span id="tvq">0.00</span> $</p>
+  <p class="total">Total : <span id="total">0.00</span> $</p>
+
+  <div style="margin-top:12px">
+    <button class="btn" onclick="envoyerGmail()">Envoyer par Gmail</button>
+    <button class="btn" onclick="envoyerWhatsApp()">Envoyer WhatsApp</button>
+    <button class="btn" onclick="envoyerMessenger()">Envoyer Messenger</button>
+    <button class="btn" onclick="genererPDF()">Envoyer PDF</button>
+  </div>
+
+  <div id="footer">
+    Joint-tech inc, 760 rue Latour, Sainte-Adèle, QC, CA, J8B 1J6<br>
+    RBQ 5835 0793-01 | #TPS 77576813 RT001 | #TVQ 123017 8531
+  </div>
+</div>
+
+<script>
+/* ---------- NUMÉRO + DATE ---------- */
+function genererNumeroFacture() {
+  let dernier = localStorage.getItem("dernierNumeroFacture");
+  if (!dernier) {
+    dernier = 1;
+  } else {
+    dernier = parseInt(dernier) + 1;
+  }
+  localStorage.setItem("dernierNumeroFacture", dernier);
+  document.getElementById("numeroFacture").textContent = "FAC-" + String(dernier).padStart(5, "0");
+}
+function afficherDateHeure() {
+  const now = new Date();
+  const options = { year:'numeric', month:'long', day:'numeric', hour:'2-digit', minute:'2-digit' };
+  document.getElementById("dateHeure").textContent = now.toLocaleDateString('fr-CA', options);
+}
+
+/* ---------- Lignes & calculs ---------- */
+function ajouterLigne() {
+  const tbody = document.querySelector("#services tbody");
+  const tr = document.createElement("tr");
+  tr.innerHTML = `
+    <td><textarea rows="2" style="width:100%" placeholder="Description"></textarea></td>
+    <td><input type="number" min="1" value="1" onchange="calculerTotal()"></td>
+    <td><input type="number" min="0" step="0.01" value="0" onchange="calculerTotal()"></td>
+    <td class="ligneTotal">0.00</td>
+    <td><button class="btn" onclick="this.parentElement.parentElement.remove(); calculerTotal()">❌</button></td>
+  `;
+  tbody.appendChild(tr);
+  calculerTotal();
+}
+
+function calculerTotal() {
+  let sousTotal = 0;
+  document.querySelectorAll("#services tbody tr").forEach(row => {
+    const q = Number(row.cells[1].querySelector("input").value) || 0;
+    const p = Number(row.cells[2].querySelector("input").value) || 0;
+    const tot = q * p;
+    row.querySelector(".ligneTotal").textContent = tot.toFixed(2);
+    sousTotal += tot;
+  });
+  const tps = sousTotal * 0.05;
+  const tvq = sousTotal * 0.09975;
+  const total = sousTotal + tps + tvq;
+
+  document.getElementById("sousTotal").textContent = sousTotal.toFixed(2);
+  document.getElementById("tps").textContent = tps.toFixed(2);
+  document.getElementById("tvq").textContent = tvq.toFixed(2);
+  document.getElementById("total").textContent = total.toFixed(2);
+}
+
+/* ---------- Nouvelle facture (reset) ---------- */
+function nouvelleFacture() {
+  // incrémente un nouveau numéro
+  genererNumeroFacture();
+  // reset champs
+  document.getElementById("client").value = "";
+  document.getElementById("adresse").value = "";
+  document.getElementById("adresseFacturation").value = "";
+  document.getElementById("telephone").value = "";
+  document.querySelector("#services tbody").innerHTML = "";
+  document.getElementById("sousTotal").textContent = "0.00";
+  document.getElementById("tps").textContent = "0.00";
+  document.getElementById("tvq").textContent = "0.00";
+  document.getElementById("total").textContent = "0.00";
+  ajouterLigne();
+}
+
+/* ---------- Impression ---------- */
+function imprimer() {
+  // préparer affichage si nécessaire puis imprimer
+  window.print();
+}
+
+/* ---------- TEXTE FACTURE (pour Gmail/WhatsApp/Messenger) ---------- */
+function genererTexteFacture() {
+  let texte = `FACTURE - Jointech inc.\n\n`;
+  texte += `Client : ${document.getElementById("client").value}\n`;
+  texte += `Adresse : ${document.getElementById("adresse").value}\n`;
+  texte += `Adresse facturation : ${document.getElementById("adresseFacturation").value}\n`;
+  texte += `Téléphone : ${document.getElementById("telephone").value}\n`;
+  texte += `Numéro : ${document.getElementById("numeroFacture").textContent}\n`;
+  texte += `Date : ${document.getElementById("dateHeure").textContent}\n\n`;
+  texte += `---- Services ----\n`;
+  document.querySelectorAll("#services tbody tr").forEach(row => {
+    const desc = row.cells[0].querySelector("textarea").value;
+    const q = row.cells[1].querySelector("input").value;
+    const p = row.cells[2].querySelector("input").value;
+    const tot = row.querySelector(".ligneTotal").textContent;
+    texte += `• ${desc} | Qté: ${q} | Prix: ${p}$ | Total: ${tot}$\n`;
+  });
+  texte += `\nSous-total : ${document.getElementById("sousTotal").textContent}$\n`;
+  texte += `TPS : ${document.getElementById("tps").textContent}$\n`;
+  texte += `TVQ : ${document.getElementById("tvq").textContent}$\n`;
+  texte += `Total : ${document.getElementById("total").textContent}$\n\n`;
+  texte += `---- Join-tech inc, 760 rue Latour, Sainte-Adèle, QC, CA, J8B 1J6\n`;
+  texte += `RBQ 5835 0793-01 | #TPS 77576813 RT001 | #TVQ 123017 8531\n`;
+  return encodeURIComponent(texte);
+}
+
+/* ---------- ENVOI (Gmail / WhatsApp / Messenger) ---------- */
+function envoyerGmail() {
+  const sujet = encodeURIComponent("Facture " + document.getElementById("numeroFacture").textContent);
+  const body = genererTexteFacture();
+  window.open(`https://mail.google.com/mail/?view=cm&fs=1&su=${sujet}&body=${body}`, "_blank");
+}
+
+function envoyerWhatsApp() {
+  const texte = genererTexteFacture();
+  window.open(`https://wa.me/?text=${texte}`, "_blank");
+}
+
+function envoyerMessenger() {
+  const texte = genererTexteFacture();
+  window.open(`https://www.messenger.com/`, "_blank");
+}
+
+/* ---------- PDF PRO (jsPDF + autoTable) ---------- */
+async function genererPDF() {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: "pt", format: "letter" });
+
+  let y = 40;
+
+  // Zone logo (placeholder)
+  doc.setFontSize(12);
+  doc.setFont("helvetica", "bold");
+  doc.text("LOGO ICI (250x120px)", 40, y);
+  y += 60;
+
+  // Entête entreprise
+  doc.setFontSize(16);
+  doc.setFont("helvetica", "bold");
+  doc.text("Join-tech", 40, y);
+  y += 20;
+
+  doc.setFontSize(11);
+  doc.setFont("helvetica", "normal");
+  doc.text("760 rue Latour, Saint-Adèle, Québec", 40, y); y += 14;
+  doc.text("Téléphone : 450 602 4403", 40, y); y += 14;
+  doc.text("Courriel : jointechnique@gmail.com", 40, y); y += 14;
+  doc.text("Site web : Jointechinc.ca", 40, y); y += 20;
+
+  // Numéro facture + date
+  const nf = document.getElementById("numeroFacture").textContent;
+  doc.setFont("helvetica", "bold"); doc.setFontSize(14);
+  doc.text("Facture : " + nf, 40, y);
+  y += 18;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(11);
+  doc.text("Date : " + document.getElementById("dateHeure").textContent, 40, y);
+  y += 18;
+
+  // Infos client
+  doc.setFont("helvetica", "bold");
+  doc.text("Client :", 40, y); y += 14;
+  doc.setFont("helvetica", "normal");
+  doc.text("Nom : " + document.getElementById("client").value, 40, y); y += 14;
+  doc.text("Adresse : " + document.getElementById("adresse").value, 40, y); y += 14;
+  doc.text("Adresse facturation : " + document.getElementById("adresseFacturation").value, 40, y); y += 14;
+  doc.text("Téléphone : " + document.getElementById("telephone").value, 40, y); y += 18;
+
+  // Tableau services
+  const body = [];
+  document.querySelectorAll("#services tbody tr").forEach(row => {
+    const desc = row.cells[0].querySelector("textarea").value || "";
+    const q = row.cells[1].querySelector("input").value || "0";
+    const p = row.cells[2].querySelector("input").value || "0.00";
+    const tot = row.querySelector(".ligneTotal").textContent || "0.00";
+    body.push([desc, q, p + " $", tot + " $"]);
+  });
+
+  doc.autoTable({
+    startY: y,
+    head: [["Description", "Qté", "Prix", "Total"]],
+    body: body,
+    theme: "grid",
+    styles: { fontSize: 10 },
+    headStyles: { fillColor: [240,240,240] },
+    margin: { left: 40, right: 40 }
+  });
+
+  y = doc.lastAutoTable.finalY + 10;
+
+  // Totaux
+  doc.setFontSize(12);
+  doc.setFont("helvetica", "bold");
+  doc.text("Sous-total : " + document.getElementById("sousTotal").textContent + " $", 400, y);
+  y += 14;
+  doc.text("TPS (5%) : " + document.getElementById("tps").textContent + " $", 400, y);
+  y += 14;
+  doc.text("TVQ (9.975%) : " + document.getElementById("tvq").textContent + " $", 400, y);
+  y += 16;
+  doc.setFontSize(14);
+  doc.text("TOTAL : " + document.getElementById("total").textContent + " $", 400, y);
+
+  // Footer EXACT (Option 2, deux lignes)
+  const footerY = doc.internal.pageSize.height - 60;
+  doc.setFontSize(10);
+  doc.text("Joint-tech inc, 760 rue Latour, Sainte-Adèle, QC, CA, J8B 1J6", 40, footerY);
+  doc.text("RBQ 5835 0793-01 | #TPS 77576813 RT001 | #TVQ 123017 8531", 40, footerY + 12);
+
+  // Sauvegarde du PDF et ouverture Gmail
+  const pdfName = "Facture_" + nf + ".pdf";
+  doc.save(pdfName);
+
+  // Option B: après génération, ouvrir Gmail avec texte pré-rempli (PDF à joindre manuellement)
+  setTimeout(() => { envoyerGmail(); }, 700);
+}
+
+/* ---------- initialisation ---------- */
+genererNumeroFacture();
+afficherDateHeure();
+ajouterLigne();
+
+/* ---------- metAJour automatique quand on tape ---------- */
+document.addEventListener('input', (e) => {
+  // Met à jour si c'est un champ quantité/prix/textarea dans le tableau
+  if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) {
+    // éviter recalculs non nécessaires mais simple ici :
+    calculerTotal();
+  }
+});
+</script>
+
+</body>
+</html>
